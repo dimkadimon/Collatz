@@ -1,0 +1,18 @@
+# compiled binaries (build from src/*.c)
+src/phi
+src/phi_table
+src/minj
+src/minj_beam
+src/runlen
+src/hiq
+src/tst2npj
+src/verify_rows
+src/factstreak
+src/factverify
+src/factcheck
+*.o
+*.aux
+*.log
+*.out
+data/CollatzData.xlsx
+data/CollatzCode/

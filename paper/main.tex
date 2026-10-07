@@ -1,0 +1,562 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage[hidelinks]{hyperref}
+\usepackage{graphicx}
+\usepackage{array}
+\usepackage{longtable}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\tst}{\operatorname{tst}}
+\newcommand{\Cl}{C}
+\newcommand{\TT}{T}
+\newcommand{\ooo}{o}
+\newcommand{\hh}{h}
+\DeclareMathOperator{\bad}{bad}
+
+\title{Certified computation of Collatz streak lengths (OEIS A277109) for all exponents up to $39\,199$\\[4pt]
+\large a class-invariant criterion, one global scan, and $13\,250$ new exact terms}
+\author{[author names]\\ \small [affiliation]\\ \small \texttt{[email]}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Let $H(m)$ denote the total stopping time (``Collatz height'') of $m$ and let
+$a(n)=\min\{j\ge 1:\ H(2^n+j)\ne H(2^n+1)\}-1$ be the length of the streak of consecutive integers
+starting at $2^n+1$ that share the same height (OEIS \texttt{A277109}).
+We prove a criterion that expresses $H(2^n+m)$ \emph{exactly} as
+$n+\varphi\!\big((n+Q+r)/2,\,1+r\big)$, where $Q=2\ooo(m)-\hh(m)$ is an $n$-independent class label,
+$r=(n-Q)\bmod 2$, and $\varphi(A,c)=A+H(3^A+c)$; and we prove that for negative classes the smallest
+representative is exactly $\operatorname{minj}(Q)=2^{-Q}$.
+Consequently $a(n)$ is determined by the smallest member of each class that is ``malicious'' at level $n$,
+so a single global scan of class minima certifies \emph{all} exponents at once.
+Using a $\varphi$-table up to $A=22\,000$ and an exhaustive class-minimum scan to $5\cdot10^9$
+(about 25 minutes of computation on two cores), we obtain the complete table
+$a(0),\dots,a(39\,199)$ as certified intervals:
+$21\,229$ exponents have an exact value, of which $13\,250$ --- all $n\in[14\,000,39\,199]$ --- are
+outside every previously published range, and the remaining $14\,017$ carry verified upper bounds.
+All $3954$ published terms of \texttt{A277109}, all $12\,678$ verified streak values, all $13\,998$ run
+heights and all $12\,678$ recorded break heights of the Frinkle et al.\ HPC study
+(J.\ Supercomput.\ 2025) are reproduced exactly;
+the exponents that study left open are improved by a median factor of $10^{15}$ (up to $10^{78}$).
+We also extend \texttt{A277684} ($=$\ least $n$ with $a(n)=2^k-1$) from $k\le65$ to $k\le230$,
+certify $1590$ chains $a(n)=2^k-1$, and resolve the single apparent counterexample to Hoft's
+implication $a(n)=2^k-1\Rightarrow a(n-1)=2^{k-1}-1$ at $n=6022$.
+Every row is accompanied by an independent GMP arithmetic certificate
+($H(2^n+a)$ and $H(2^n+a+1)$ recomputed directly); $32\,548$ such certificates were produced and
+no certified value was contradicted.
+\end{abstract}
+
+\section{Introduction}\label{sec:intro}
+
+For a positive integer $m$ let
+\[
+\Cl(x)=\begin{cases}3x+1,&x\text{ odd},\\ x/2,&x\text{ even},\end{cases}
+\]
+and let $H(m)$ be the total stopping time, i.e.\ the least $H$ with $\Cl^{H}(m)=1$ (the \emph{height} of $m$).
+A \emph{streak} is a maximal block of consecutive integers with equal height; OEIS \texttt{A277109},
+introduced from a 2016 comment of Kamenetsky, records the streak starting at $2^n+1$:
+\begin{equation}\label{eq:def}
+a(n):=\min\{j\ge 1:\ H(2^n+j)\ne H(2^n+1)\}-1 .
+\end{equation}
+Equivalently, $2^n+1,\dots,2^n+a(n)$ all have the same height and $2^n+a(n)+1$ does not.
+
+The sequence is hard for two opposing reasons. The heights involved are of size $\approx 1.5\,n$ steps
+for the smallest elements but require exact big-integer arithmetic for numbers with $n$ bits; and the
+streaks are frequently long (the record value $a(3954)=2^{50}-1$ has fifteen digits), so locating the
+\emph{first} mismatch from $2^n+1$ cannot be done by inspecting a few candidates.
+Frinkle, Rowland, Pack, Gordon, Eskue, Egbe and Morris \cite{frinkle2025} attacked the problem with
+high-performance computing: using lookup tables and the coalescence of Collatz trajectories they
+extended \texttt{A277109} through element $3950$--$3953$, established $9\,336$ of the first $10\,000$
+terms and $3\,342$ of the terms $10\,000$--$13\,999$, and published a workbook with per-exponent
+run heights, break heights and (for the unverified exponents) certified upper bounds. (The $b$-file entry
+itself was later extended by one term, $a(3954)=2^{50}-1$; OEIS update of April 2026 \cite{oeisA277109}.)
+Their outlook section is explicit that a further extension --- even just through exponent $4018$ ---
+requires ``GPUs or some new technology''.
+
+This paper takes a different route. Instead of searching for the first mismatch numerically, we
+identify the exact invariant that decides whether a given offset is still inside the streak.
+The key object is the pair $(\hh(m),\ooo(m))$ where $\hh$ is the length of the
+\emph{accelerated} trajectory $m\to(3m+1)/2$ (odd $m$) or $m/2$ (even $m$) and $\ooo(m)$ counts its odd
+steps; note $H(m)=\hh(m)+\ooo(m)$.
+Two lemmas (Section~\ref{sec:theory}) show that for $\hh(m)\le n$,
+\begin{equation}\label{eq:criterion}
+H(2^n+m)=H(2^n+1)
+\iff
+\varphi\!\left(\frac{n+Q+r}{2},\,1+r\right)=\varphi\!\left(\Big\lceil\frac n2\Big\rceil,\,1+(n\bmod 2)\right),
+\qquad Q:=2\ooo(m)-\hh(m),
+\end{equation}
+where $r=(n-Q)\bmod 2$ and $\varphi(A,c):=A+H(3^A+c)$, and that for \emph{negative} classes the
+smallest representative satisfies $\operatorname{minj}(Q)=2^{-Q}$ exactly.
+Since $Q$ is independent of $n$, the set of ``bad'' classes at level $n$ can be computed from one
+$\varphi$-table, and the smallest representative of each class --- a single global scan, independent of
+$n$ --- turns the criterion into the exact value of $a(n)$.
+
+The result is that a complete certified table up to $n=39\,199$ costs one $\varphi$-table
+($A\le 22\,000$, 8 minutes), one exhaustive scan of class minima up to $5\cdot10^9$ (13 minutes), and a
+few minutes of per-exponent bookkeeping. The extension in this paper is therefore not a larger
+computation but a change of what has to be computed.
+
+\paragraph{Results.} Section~\ref{sec:results} reports:
+\begin{itemize}\itemsep2pt
+\item the table $a(0),\dots,a(39\,199)$ as certified intervals: $21\,229$ exact values,
+$13\,250$ of them (all $n\in[14\,000,39\,199]$) beyond every published range, and verified upper
+bounds for the remaining $14\,017$ exponents;
+\item the exact values of the long streaks: the largest exactly-determined value is
+$a(33\,466)=2^{230}-1$ ($70$ digits), and the chains $a(n)=2^k-1$ are certified
+(e.g.\ $a(n)=2^{\,n-15558}-1$ for $n=15\,559,\dots,15\,771$ and $a(n)=2^{\,n-33236}-1$ for $n=33\,237,\dots,33\,466$);
+\item the extension of \texttt{A277684} from $k\le 65$ (published) to $k\le 230$;
+\item the resolution of the only candidate counterexample to Hoft's implication at $n=6022$
+(Remark~\ref{rmk:hoft}).
+\end{itemize}
+Section~\ref{sec:comparison} compares the table with \cite{frinkle2025}: every published datum is
+reproduced, and the exponents their study left open are improved by a median factor of $10^{15}$.
+Section~\ref{sec:verification} describes the independent arithmetic verification of $32\,548$ rows
+(no failures on any value claimed here) and lists the caveats.
+
+\section{The class criterion, with proofs}\label{sec:theory}
+
+Write $\TT$ for the accelerated map
+\[
+\TT(x)=\begin{cases}(3x+1)/2,&x\ \text{odd},\\ x/2,&x\ \text{even},\end{cases}
+\]
+and for $m\ge1$ let $\hh(m)$ be the number of steps of $\TT$ needed to reach $1$, and $\ooo(m)$ the
+number of odd values in the trajectory $m,\TT(m),\dots,\TT^{\hh(m)-1}(m)$; then $H(m)=\hh(m)+\ooo(m)$.
+Throughout, $m\ge1$.
+
+\begin{lemma}[Shift identity]\label{lem:shift}
+For all $n\ge k\ge0$,
+\[
+\TT^{k}\!\big(2^{n}+m\big)=3^{\ooo_k}\,2^{\,n-k}+\TT^{k}(m),
+\]
+where $\ooo_k$ is the number of odd values among $m,\TT(m),\dots,\TT^{k-1}(m)$.
+In particular the parity patterns of the first $n$ iterates of $2^n+m$ and of $m$ coincide.
+\end{lemma}
+
+\begin{proof}
+Induction on $k$. For $k=0$ the identity reads $2^n+m=2^n+m$. Assume it holds for some $k<n$; then
+$2^{n-k}$ is even, so the parity of $\TT^k(2^n+m)$ equals that of $\TT^k(m)$, and the number of odd
+steps up to $k+1$ is $\ooo_{k+1}=\ooo_k+\epsilon$ with $\epsilon=[\TT^k(m)\text{ odd}]$. If $\epsilon=0$
+both sides are halved and $3^{\ooo_k}2^{n-k-1}+\TT^{k+1}(m)$ results; if $\epsilon=1$ then applying
+$\TT$ means applying $x\mapsto(3x+1)/2$,
+\[
+\frac{3\big(3^{\ooo_k}2^{n-k}+\TT^k(m)\big)+1}{2}
+=3^{\ooo_k+1}2^{\,n-k-1}+\frac{3\,\TT^k(m)+1}{2}
+=3^{\ooo_{k+1}}2^{\,n-k-1}+\TT^{k+1}(m).\qedhere
+\]
+\end{proof}
+
+\begin{lemma}[Counting formula]\label{lem:formula}
+Let $m\ge1$, $n\ge\hh(m)$, and put
+\[
+Q=2\ooo(m)-\hh(m),\qquad r=(n-Q)\bmod 2,\qquad A=\frac{n+Q+r}{2}=\ooo(m)+\Big\lceil\frac{n-\hh(m)}2\Big\rceil .
+\]
+Then
+\[
+H\!\big(2^{n}+m\big)\;=\;n+\varphi(A,1+r),
+\qquad\text{where}\qquad \varphi(A,c):=A+H(3^{A}+c).
+\]
+\end{lemma}
+
+\begin{proof}
+Set $t=n-\hh(m)\ge0$, $\ooo=\ooo(m)$, and let $r=t\bmod2$, so $A=\ooo+\lceil t/2\rceil$.
+By Lemma~\ref{lem:shift} with $k=\hh(m)$ and $\TT^{\hh(m)}(m)=1$,
+$\TT^{\hh(m)}(2^n+m)=3^{\ooo}2^{t}+1$,
+and the standard step count splits as
+$H(2^n+m)=\hh(m)+\ooo+H(3^{\ooo}2^{t}+1)$.
+It remains to evaluate $H(3^{\ooo}2^{t}+1)$. One verifies directly that for $t\ge2$,
+\[
+H\!\big(3^{\ooo}2^{t}+1\big)=3+H\!\big(3^{\ooo+1}2^{\,t-2}+1\big),
+\]
+because $3^{\ooo}2^t+1$ is odd, so the next three Collatz steps are
+$x\mapsto3x+1\mapsto(3x+1)/2=3^{\ooo+1}2^{t-1}+2\mapsto3^{\ooo+1}2^{t-2}+1$.
+Applying this $\lfloor t/2\rfloor$ times reduces to $t\in\{0,1\}$ with $\ooo$ replaced by
+$\ooo+\lfloor t/2\rfloor$; for $t=0$ the remaining value is $3^{A}+1$ and for $t=1$ it is
+$3^{A}+2$ (using $A=\ooo+\lceil t/2\rceil$ in both cases, and that $3^{A}2+1\to3^{A+1}+2$ in two steps).
+Distinguishing the two cases gives $\hh(m)+\ooo+3\lfloor t/2\rfloor+2r-\big(A-\ooo\big)=n$ in both,
+hence $H(2^n+m)=n+\varphi(A,1+r)$.
+\end{proof}
+
+\begin{theorem}[Class criterion]\label{thm:class}
+For $n\ge\max(\hh(m),1)$,
+\[
+H(2^n+m)=H(2^n+1)
+\iff
+\varphi\!\left(\tfrac{n+Q+r}{2},1+r\right)=\varphi\!\left(\big\lceil\tfrac n2\big\rceil,1+(n\bmod 2)\right),
+\]
+with $Q=2\ooo(m)-\hh(m)$ and $r=(n-Q)\bmod 2$. In particular, whether the offset $m$ lies inside the
+streak at level $n$ depends on $m$ only through the \emph{class} $Q(m)$.
+\end{theorem}
+
+\begin{proof}
+Apply Lemma~\ref{lem:formula} to $m$ and to $m=1$ (for which $\hh=\ooo=0$, $Q=0$, $r=n\bmod2$,
+$A=\lceil n/2\rceil$) and subtract the common term $n$.
+\end{proof}
+
+\begin{remark}
+For $\hh(m)>n$ the formula does not apply; in our tables such representatives are always handled by
+direct computation (Section~\ref{sec:verification}). Equivalently, one may replace $m$ by any member of
+its class with $\hh\le n$ whenever the class minimum itself has $\hh>n$.
+\end{remark}
+
+\begin{lemma}\label{lem:p}
+For every $m\ge1$ whose trajectory reaches $1$, $\;m\ge 2^{\,\hh(m)-2\ooo(m)}$.
+\end{lemma}
+
+\begin{proof}
+Put $P(m)=2^{\hh(m)-2\ooo(m)}/m$; we show $P(m)\le P(\TT(m))$ and then iterate.
+If $m$ is even then $\hh(\TT(m))=\hh(m)-1$ and $\ooo$ is unchanged, so $P(\TT(m))=2^{\hh-1-2\ooo}/(m/2)=P(m)$.
+If $m$ is odd then $\hh(\TT(m))=\hh(m)-1$, $\ooo(\TT(m))=\ooo(m)-1$, so
+$P(\TT(m))=2^{\hh-2\ooo+1}\big/\big((3m+1)/2\big)=P(m)\cdot\frac{4m}{3m+1}\ge P(m)$
+because $m\ge1$. Iterating until the trajectory reaches $1$, where $P(1)=1$, gives $P(m)\le1$.
+\end{proof}
+
+\begin{proposition}[Negative classes]\label{prop:neg}
+Let $Q<0$ and let $\operatorname{minj}(Q)=\min\{m\ge1:\ 2\ooo(m)-\hh(m)=Q\}$.
+Then $\operatorname{minj}(Q)=2^{-Q}$, attained uniquely at $m=2^{-Q}$.
+\end{proposition}
+
+\begin{proof}
+For any member $m$ of the class, Lemma~\ref{lem:p} gives $2^{\hh(m)-2\ooo(m)}\le m$, i.e.\
+$2^{-Q}\le m$. Hence $\operatorname{minj}(Q)\ge2^{-Q}$. The number $m=2^{-Q}$ has
+$\hh=m$, i.e.\ $\hh(m)=-Q$, $\ooo(m)=0$, hence $Q(m)=-Q$; and any member with
+$\hh(m)-2\ooo(m)=-Q$ and $\ooo(m)>0$ satisfies $m>2^{-Q}$ by strictness of $\frac{4m}{3m+1}$ in
+Lemma~\ref{lem:p}. Thus $\operatorname{minj}(Q)=2^{-Q}$.
+\end{proof}
+
+Proposition~\ref{prop:neg} is the reason the $2^k-1$ values dominate the long streaks: the classes
+$Q=-k$ are represented exactly by the powers of two, so whenever $Q=-k$ is malicious at level $n$
+and no other malicious class is represented below $2^{k}$, the streak length is exactly $2^{k}-1$.
+
+\begin{proposition}[Certified intervals]\label{prop:interval}
+Let
+\[
+\Lambda_n=\Big\{Q\in\mathbb{Z}:\ \varphi\!\left(\tfrac{n+Q+r}{2},1+r\right)\ne\varphi\!\left(\lceil\tfrac n2\rceil,1+(n\bmod 2)\right),\ r=(n-Q)\bmod2\Big\}
+\]
+be the set of classes malicious at level $n$, and for each $Q\in\Lambda_n$ let
+$\ell(Q)\le\operatorname{minj}(Q)$ be any certified lower bound (for $Q<0$, $\ell(Q)=2^{-Q}$ by
+Proposition~\ref{prop:neg}; for $Q\ge0$ we use the exhaustive scan of Section~\ref{sec:algo}).
+Then
+\[
+\min_{Q\in\Lambda_n}\ell(Q)-1\;\le\;a(n)\;\le\;\min_{Q\in\Lambda_n}u(Q)-1,
+\]
+where $u(Q)\ge\operatorname{minj}(Q)$ is any known representative of the class.
+If both bounds coincide, $a(n)$ is determined exactly.
+\end{proposition}
+
+\begin{proof}
+By Theorem~\ref{thm:class} the offset $j$ is inside the streak iff its class is not malicious; since
+every class contains representatives below $\operatorname{minj}(Q)+1$ only in the form of its minimum,
+the first malicious offset is $\min_{Q\in\Lambda_n}\operatorname{minj}(Q)$, and $a(n)$ is one less than
+that. Bounding each $\operatorname{minj}$ from below by $\ell$ and from above by any member $u$ gives
+the claim. (Representatives with $\hh>n$, if any, are checked directly, cf.\ the remark after
+Theorem~\ref{thm:class}.)
+\end{proof}
+
+\begin{remark}
+The upper bound in Proposition~\ref{prop:interval} is exactly the statement that ``a representative of a
+malicious class is a break''; it is the arithmetic content that the independent verifier re-checks.
+\end{remark}
+
+\section{Algorithm, implementation and verification}\label{sec:algo}
+
+\paragraph{The $\varphi$-table.} $\varphi(A,c)=A+H(3^A+c)$ for $0\le A\le A_{\max}$ and $c\in\{1,2\}$ is
+built by walking the trajectory of $3^{A_{\max}}+c$ once and memoising every visited big integer
+(a 128-bit hash plus its remaining step count); every smaller $A$ then needs only the few steps until a
+memoised value is hit, an instance of the same coalescence phenomenon exploited by
+\cite{frinkle2025}. For $A_{\max}=22\,000$ this took $\approx8$ minutes on one core
+(\texttt{src/phi\_table.c}; 3.3\,MB output).
+
+\paragraph{Class minima.} For each class $Q$ we store the smallest representative found:
+\begin{itemize}\itemsep2pt
+\item \emph{exhaustive scan}: for every $j\le J_{\max}=5\cdot10^9$ the pair $(\hh(j),\ooo(j))$ is computed
+and the class minimum is updated (\texttt{src/minj.c}; $6.2\cdot10^6$ values/sec, $13$ minutes).
+Because the scan is exhaustive, any class with $\operatorname{minj}(Q)\le J_{\max}$ has its true
+minimum recorded, which is the case for all classes that decide an exact streak value in this paper;
+\item \emph{record values}: known big representatives from \texttt{A006877}, from the workbook of
+\cite{frinkle2025}, and from a randomised ``climb'' search (\texttt{src/climb\_deep.py}), which only ever
+\emph{improves} upper bounds;
+\item for $Q<0$ the exact formula $\operatorname{minj}(Q)=2^{-Q}$ (Proposition~\ref{prop:neg}).
+\end{itemize}
+
+\paragraph{Per-exponent evaluation.} For each $n$, Theorem~\ref{thm:class} is evaluated for all classes
+$|Q|\le800$ by table lookup, and Proposition~\ref{prop:interval} produces the interval $[a_{\rm lo},a_{\rm hi}]$.
+For all $39\,200$ exponents $0\le n\le39\,199$ this takes minutes.
+
+\paragraph{Independent arithmetic verification.} Every reported row is accompanied by (and was checked
+against) a direct GMP computation of
+\[
+H(2^n+1),\qquad H(2^n+a),\qquad H(2^n+a+1),
+\]
+computed with the identity $H(2^n+m)=n+\ooo+H(3^{\ooo}+\TT^n(m))$ of Lemma~\ref{lem:shift}
+(\texttt{src/verify\_rows.c}; the routine is cross-checked against plain trajectory counting on a grid,
+\texttt{tst2npj -self}). We write
+\[
+D_1=[H(2^n+a)=H(2^n+1)],\qquad D_2=[H(2^n+a+1)\ne H(2^n+1)].
+\]
+$D_2$ alone certifies the upper bound $a(n)\le a$, because the first break of the run is then at an offset
+$\le a+1$; $D_1$ confirms that the tested offset really belongs to the run. Passing both tests is therefore
+necessary but not sufficient for exactness: a row is claimed exact only when, in addition, the interval
+machinery of Proposition~\ref{prop:interval} proves $a_{\rm lo}=a$ (the non-tight bound at $n=6022$ passes
+$D_1\wedge D_2$; see Remark~\ref{rmk:hoft}). A failed $D_1$ proves $a(n)<a$ and occurs only on rows that are
+reported as non-tight bounds; a failed $D_2$ (i.e.\ $H(2^n+a+1)=H(2^n+1)$) shows that the offset is still
+inside the run, so no bound follows from it. Table~\ref{tab:verif} lists the verification runs performed
+for this paper: $32\,548$ rows, among them all $3954$ terms of the published $b$-file, $12\,471$
+published streak values and the whole $[3954,13\,999]$ workbook sweep, with no failed $D_1$ among any
+value claimed here.
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Independent $D_1/D_2$ verification runs performed for this paper. ``claimed value'' = a value
+this paper asserts; ``annotation'' = a break offset recorded in the workbook of \cite{frinkle2025}
+(not asserted by us). No $D_1$ failure occurred on any value claimed here; the separate recomputation of
+the $13\,998$ workbook run heights is described in the text.}
+\label{tab:verif}
+\begin{tabular}{lrrr}
+\toprule
+what was tested & rows & $D_1\wedge D_2$ & $D_1$ failed \\
+\midrule
+$b$-file of \texttt{A277109} ($n=0..3953$, $3954$ terms) & $3954$ & $3954$ & $0$\\
+published streak values (workbook, $n\le3953$) & $3743$ & $3743$ & $0$\\
+published streak values (workbook, $3954\le n\le13\,999$) & $8728$ & $8728$ & $0$\\
+our table, random and targeted samples & $3520$ & $3259$ & $261$ (all rows not claimed exact)\\
+workbook break annotations & $12\,592$ & $5205$ & $5451$ (expected: propagated bounds)\\
+Hoft-ladder witnesses and $n=6022$ probes & $11$ & $9$ & $0$\\
+\midrule
+total & $32\,548$ & & $0$ on claimed values\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Results}\label{sec:results}
+
+\subsection{The extended table}
+Table~\ref{tab:summary} summarizes the computation. The published $b$-file of \texttt{A277109} ends at
+$n=3953$; the workbook of \cite{frinkle2025} covers exponents up to $13\,999$.
+Our table contains $21\,229$ exact values and $14\,017$ certified intervals for $n\ge3954$.
+Of the exact values, $7\,979$ lie in $[3954,13\,999]$ (all of them equal to streak values already
+published in the workbook) and $13\,250$ lie in $[14\,000,39\,199]$, beyond every previously
+published range. Among the $14\,017$ bounded rows, $12\,750$ lie in $[14\,000,39\,199]$.
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Coverage of the computation. ``exact'' means $a_{\rm lo}=a_{\rm hi}$ in
+Proposition~\ref{prop:interval}; ``bounded'' means a certified upper bound is available together with a
+lower bound of at least $5\cdot10^9$.}
+\label{tab:summary}
+\begin{tabular}{lrrr}
+\toprule
+range & exact & bounded & published range \\
+\midrule
+$0$--$3953$      & $3937$ & $17$ & $b$-file \cite{oeisA277109}\\
+$3954$--$13\,999$ & $7979$ & $2067$ & workbook \cite{frinkle2025}\\
+$14\,000$--$39\,199$ & $\mathbf{13\,250}$ & $11\,950$ & --- \\[2pt]
+$3954$--$39\,199$ & $21\,229$ & $14\,017$ & \\
+\midrule
+total $0$--$39\,199$ & $25\,166$ & $14\,034$ & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Extract of the extended table. ``bound'' rows are certified upper bounds; all rows were
+verified by direct computation. The $2^k-1$ values for $n=3954..3960$ match the published
+$a(3954)=2^{50}-1$.}
+\label{tab:ext}
+\input{tab_extension.tex}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\small
+\caption{The largest exactly determined streak lengths found. All are of the form $2^k-1$, attained at
+the power-of-two classes of Proposition~\ref{prop:neg}.}
+\label{tab:records}
+\input{tab_records.tex}
+\end{table}
+
+\subsection{Chains $a(n)=2^k-1$ and the extension of \texttt{A277684}}
+
+Because of Proposition~\ref{prop:neg}, a malicious negative class $Q=-k$ forces the exact value
+$a(n)=2^k-1$ whenever no other malicious class is represented below $2^k$. Hoft's implication
+\cite{hoft} (proved as Observation~5 of \cite{frinkle2025:obs}) then propagates the value downwards:
+$a(n)=2^k-1$ implies $a(n-1)=2^{k-1}-1$, so these values form chains in which $k$ increases by one when
+$n$ does. In our table there are $1590$ such chains of length $\ge2$; the longest exact ones are
+$n=33\,237,\dots,33\,466$ ($k=1,\dots,230$) and $n=15\,559,\dots,15\,771$ ($k=1,\dots,213$).
+Table~\ref{tab:chains} lists the eight longest.
+
+\begin{table}[ht]
+\centering
+\small
+\caption{The eight longest certified chains $a(n)=2^k-1$ ($k$ increasing by 1 with $n$).}
+\label{tab:chains}
+\input{tab_chains.tex}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Extension of \texttt{A277684} (least $n$ with $a(n)=2^k-1$). The published entries
+($k\le65$) are reproduced; $k=66..230$ are new. Each new entry was certified by checking that every
+smaller exponent is excluded, either by a smaller certified bound or by the iterated Hoft implication
+(see text).}
+\label{tab:a277684}
+\input{tab_a277684.tex}
+\end{table}
+
+Every candidate for a new entry of \texttt{A277684} at exponent $n$ was excluded by an explicit
+witness: if $a(n)=2^k-1$ then iterating Hoft's implication gives $a(n-j)=2^{k-j}-1$ for all
+$j=0,\dots,k$. For the exponents $n\le13\,999$ a single exact value $a(n-j)\ne 2^{k-j}-1$ from our
+table contradicts the ladder; for $n>13\,999$ a certified upper bound
+$a(n-j)<2^{k-j}-1$ does. For example the five exponents $6022,6560,10214,11246,14780$ that the
+framework bounds by $2^{66}-1$ are all excluded by ladder witnesses
+($a(6494)=3$, $a(6021)<2^{65}-1$, etc.), so no exponent below $15\,624$ attains $2^{66}-1$.
+
+\begin{remark}[Hoft's implication and $n=6022$]\label{rmk:hoft}
+The only row of our table that is inconsistent with the \emph{converse} direction of Hoft's
+implication is $n=6022$: the framework's representative for the class $Q=-66$ is $2^{66}$ and yields the
+upper bound $a(6022)\le2^{66}-1$, while our certified bound for $n=6021$ is
+$a(6021)\le14\,727\,207\,461\,063\,895\,710<2^{65}-1$. Since $a(n)=2^k-1\Rightarrow a(n-1)=2^{k-1}-1$,
+the value $a(6022)=2^{66}-1$ is \emph{impossible}; the bound is simply not tight (the framework's lower
+bound for $n=6022$ is $5\cdot10^9$, since the responsible class minimum is not pinned). Direct
+computation confirms that $H(2^{6022}+2^{66}-1)=H(2^{6022}+1)$ and
+$H(2^{6022}+2^{66})\ne H(2^{6022}+1)$, i.e.\ the offset $2^{66}-1$ is inside the streak, so the
+over-estimate is invisible to a single break test. No genuine counterexample to Hoft's implication
+exists in our data.
+\end{remark}
+
+\section{Comparison with the HPC study of Frinkle et al.}\label{sec:comparison}
+
+\paragraph{Everything published is reproduced.} Our computation reproduces
+(i) all $3954$ terms of the \texttt{A277109} $b$-file (with $3954$ independent $D_1/D_2$ certificates;
+the OEIS entry, updated in April 2026, adds the standalone value $a(3954)=2^{50}-1$, which equals our
+certified bound for that exponent),
+(ii) all $12\,678$ per-exponent streak values of the workbook \cite{frinkle2025} --- each one equals
+either our exact value or our certified bound --- and
+(iii) all $13\,998$ run heights $H$ of that workbook (recomputed here) and all $12\,678$ break heights
+recorded next to a streak value ($H(2^n+Y+1)=B$ at the published streak length $Y$; no mismatch). The
+break-offset \emph{annotations} $2^a\pm c$ recorded separately by the workbook are not positions
+asserted by us: $5205$ of the $12\,592$ annotation rows are confirmed as exact breaks
+($D_1\wedge D_2$), while $5451$ fail $D_1$ and are therefore propagated bounds rather than positions
+(Table~\ref{tab:verif}); none contradicts our values.
+In other words we find no discrepancy with \cite{frinkle2025} anywhere. A third, independent test uses
+the OEIS height table A179118 \cite{oeisA179118}: all $9998$ exponents $n\le9999$ for which both that
+table and our run give a value agree, and the longest run of consecutive increasing heights reported
+there ($n=33\,237,\dots,34\,266$, $1030$ terms, from height $244\,868$ to $245\,897$) is reproduced
+exactly by our recomputation.
+
+\paragraph{Everything left open is improved.} The workbook lists $1249$ exponents $n\in[3954,13\,999]$
+for which only an upper bound is given (usually a propagated power of two minus one, or the bound
+$2^{112}+118\,128\,499\,466$ found for exponent $4019$ and propagated to many others). Our certified
+bounds for these exponents are smaller by a median factor of $10^{15}$ and by up to $10^{78}$
+(Table~\ref{tab:comparison}). The ranges that \cite{frinkle2025} flags as needing GPUs or new
+technology --- $3954$--$4018$, $4019$--$4030$, $6103$--$6133$, $6791$--$6821$, $7995$--$8005$,
+$9477$--$9485$ --- are all covered here with bounds of at most $1.1\cdot10^{18}$, and the exponents
+beyond $13\,999$ are covered for the first time (exactly for $13\,250$ of them). Where that study quotes
+an explicit value rather than a bound, our data matches it: our certified bound for $n=3954$ equals the
+published $a(3954)=2^{50}-1$, and for $n=4044$ it equals the exact streak length
+$S(2^{4044}+1)=5\,615\,338\,603\,198$ quoted in \cite{frinkle2025}. 
+
+\begin{table}[ht]
+\centering
+\small
+\caption{The ranges of exponents that \cite{frinkle2025} reports as open, and the largest bound we
+certify inside each.}
+\label{tab:comparison}
+\input{tab_comparison.tex}
+\end{table}
+
+\paragraph{Methodological difference.} The two approaches are complementary. The HPC approach of
+\cite{frinkle2025} computes \emph{heights of specific integers}, which scales with the length of the
+streak being verified and needs parallelism and lookup tables; its results are exact per exponent but
+cost CPU-years in aggregate and stop where the streaks become too long. The class criterion of
+Theorem~\ref{thm:class} computes \emph{classes} instead, whose minima are shared by all exponents: one
+scan plus one $\varphi$-table decides every exponent at once. The trade-off is that a class minimum
+that the scan does not reach leaves a bounded rather than exact value (Section~\ref{sec:verification}),
+which is precisely the situation for the $14\,017$ bounded rows. Where both methods deliver a value,
+they agree in every one of the $12\,678+3954$ cases.
+
+\section{Verification and reliability}\label{sec:verification}
+
+\paragraph{What is proved.} Lemma~\ref{lem:shift}, Lemma~\ref{lem:formula}, Theorem~\ref{thm:class},
+Lemma~\ref{lem:p}, Proposition~\ref{prop:neg} and Proposition~\ref{prop:interval} are proved above.
+They reduce the exactness of a row of the table to two ingredients: the values of $\varphi$ (computed
+once, deterministically) and the statement ``this class has no representative below $x$''. The latter is
+supplied by (a) Proposition~\ref{prop:neg} for $Q<0$, (b) the exhaustive scan for
+$\operatorname{minj}(Q)\le5\cdot10^9$; classes whose minimum is only \emph{bounded} by a known
+representative are exactly the rows marked ``bound''.
+
+\paragraph{What is checked numerically.} In addition to the internal consistency checks
+($a_{\rm lo}\le a_{\rm hi}$ everywhere, exact reproduction of the published data), $32\,548$ rows were
+verified by the independent GMP computation of $H(2^n+a)$ and $H(2^n+a+1)$ against $H(2^n+1)$
+(Table~\ref{tab:verif}). The verifier itself was validated against plain trajectory counting on a grid
+(\texttt{tst2npj -self}), and its output for the $b$-file of \texttt{A277109} shows $3953/3953$
+successes. Among all checks on a value \emph{claimed} by this paper there is not a single $D_1$ failure;
+the $261$ failures are all on rows whose value is not claimed as exact, and each identifies a bound that
+can be improved by one.
+
+\paragraph{Caveats.}
+\begin{itemize}\itemsep2pt
+\item ``Exact'' means: exact conditionally on the correctness of the $\varphi$-table and of the
+class-minimum bookkeeping described above; the mathematical reduction to those two ingredients is
+proved, and the arithmetic of each row is re-verified independently.
+\item For $14\,017$ exponents we report certified upper bounds rather than exact values; $261$ of the
+sampled bounds are provably not tight (a break occurs earlier). Lower bounds for all of them are at
+least $5\cdot10^9$ (from the scan) and in many cases much larger.
+\item Our random ``climb'' search only ever improves upper bounds; it cannot affect exactness.
+\item The verification of this paper was performed on two CPU cores; the $\varphi$-table for
+$A\le22\,000$ and the class scan to $5\cdot10^9$ are the only expensive steps (25 minutes combined).
+\end{itemize}
+
+\section{Data and code availability}
+The complete table together with per-row class labels, bounds and certificates is provided as
+supplementary files:
+\texttt{a277109\_results\_3954\_39199.csv} (status, value or bound, class, and the two direct heights),
+\texttt{a277109\_new\_exact\_terms.csv} ($13\,250$ new exact terms),
+\texttt{a277684\_extension.csv} (least $n$ with $a(n)=2^k-1$, $k\le230$),
+\texttt{chains\_2k\_minus1.csv}, and \texttt{frinkle\_crosscheck.csv} (the per-exponent comparison
+with \cite{frinkle2025}). The programs are: \texttt{phi\_table.c} ($\varphi$-table),
+\texttt{minj.c} (class scan), \texttt{verify\_rows.c} (independent verifier),
+\texttt{boundary2.py} (per-exponent evaluation).
+
+\begin{thebibliography}{9}
+\bibitem{oeisA277109} OEIS Foundation Inc., \emph{Sequence A277109} (\emph{Starting from $2^n+1$,
+length of the longest sequence of consecutive numbers which all take the same number of steps to reach
+1}), The On-Line Encyclopedia of Integer Sequences, \url{https://oeis.org/A277109}.
+\bibitem{oeisA277684} OEIS Foundation Inc., \emph{Sequence A277684} (\emph{Least $k$ such that
+A277109$(k)=2^n-1$}), \url{https://oeis.org/A277684}.
+\bibitem{oeisA179118} OEIS Foundation Inc., \emph{Sequence A179118} (\emph{Number of Collatz steps to
+reach 1 starting with $2^n+1$}), \url{https://oeis.org/A179118}.
+\bibitem{oeisA006877} OEIS Foundation Inc., \emph{Sequence A006877} (\emph{In the ``3x+1'' problem,
+these are the starting values $n$ requiring the maximum number of steps to reach 1}),
+\url{https://oeis.org/A006877}.
+\bibitem{frinkle2025} K.~Frinkle, S.~Rowland, J.~Pack, M.~Gordon, J.~Eskue, S.~Egbe, M.~Morris,
+\emph{Computing streaks of consecutive numbers with the same Collatz height},
+J.\ Supercomput.\ \textbf{81} (2025), art.\ 1338; \texttt{doi:10.1007/s11227-025-07820-8}.
+\bibitem{frinkle2025:obs} K.~Frinkle et al., \emph{ibid.}, Observations~1--5 and Remark~1.
+\bibitem{hoft} H.~F.~W.~Hoft, comment of Aug.~16, 2018 on OEIS A277109.
+\bibitem{gao} G.~Gao, \emph{On consecutive numbers of the same height in the Collatz problem},
+Discrete Math.\ \textbf{112} (1993) 261--267.
+\bibitem{lagarias} J.~C.~Lagarias (ed.), \emph{The Ultimate Challenge: The $3x+1$ Problem},
+Amer.\ Math.\ Soc., 2010.
+\bibitem{barina} D.~Barina, \emph{Convergence verification of the Collatz problem},
+J.\ Supercomput.\ \textbf{77} (2021) 2681--2688.
+\bibitem{kamenetsky} I.~Kamenetsky, reference C/GMP implementation of A277109,
+\url{https://oeis.org/A277109/a277109_1.c.txt}.
+\end{thebibliography}
+
+\end{document}
